@@ -133,12 +133,10 @@ public:
 
 	/// <param name="buffer">Buffer to write.</param>
 	/// <param name="size">Size of input buffer.</param>
-	/// <param name="write_excess_in_splits">If true, then splits buffer
-	/// into multiple messages if too large. Otherwise, discards excess.
-	/// </param>
-	void write(uint8_t *buffer, size_t size)
+	void write(uint8_t *buffer, DWORD size)
 	{
-		WriteFile(m_pipe, buffer, size, NULL, NULL);
+		DWORD trunc_size = min(size, m_buffer_size);
+		WriteFile(m_pipe, buffer, trunc_size, NULL, NULL);
 	}
 };
 
