@@ -18,6 +18,10 @@
 
 #pragma once
 
+#ifndef _WIN32
+#error "win-pipe is a Windows only library."
+#endif
+
 #include <functional>
 #include <string>
 #include <stdexcept>
