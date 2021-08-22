@@ -21,7 +21,6 @@
 #include <functional>
 #include <string>
 #include <stdexcept>
-#include <vector>
 
 #include <Windows.h>
 
