@@ -1,0 +1,9 @@
+# Build outputs
+*.obj
+*.lib
+*.dll
+*.exe
+bin/**
+
+# Single-file lib, .cpp is only needed for local compile
+*.cpp
