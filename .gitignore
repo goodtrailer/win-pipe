@@ -1,9 +1,7 @@
-# Build outputs
+# Build stuffs
 *.obj
 *.lib
 *.dll
 *.exe
+*.bat
 bin/**
-
-# Single-file lib, .cpp is only needed for local compile
-*.cpp

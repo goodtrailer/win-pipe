@@ -77,7 +77,6 @@ public:
         CancelSynchronousIo(m_thread);
         WaitForSingleObject(m_thread, INFINITE);
 
-        DisconnectNamedPipe(m_param.pipe);
         CloseHandle(m_param.pipe);
     }
 
@@ -93,13 +92,19 @@ private:
         uint8_t* buffer = new uint8_t[param->buffer_size];
 
         while (WaitForSingleObject(param->event, 1) == WAIT_TIMEOUT) {
-            DWORD size;
-            if (ReadFile(pipe, buffer, sizeof(buffer), &size, NULL)) {
+            ConnectNamedPipe(pipe, NULL);
+
+            DWORD size = 0;
+            while (ReadFile(pipe, buffer, param->buffer_size, &size, NULL)) {
                 param->callback(buffer, (size_t)size);
             }
+
+            DisconnectNamedPipe(pipe);
         }
 
         delete[] buffer;
+
+        return TRUE;
     }
 
 private:
@@ -124,16 +129,10 @@ public:
     client(std::string_view name, DWORD buffer_size)
     {
         m_buffer_size = (std::max)(buffer_size, MIN_BUFFER_SIZE);
-
-        std::string pipe_name = format_name(name);
-        m_pipe = CreateFileA(pipe_name.c_str(), GENERIC_WRITE,
+        m_name = format_name(name);
+        m_pipe = CreateFileA(m_name.c_str(), GENERIC_WRITE,
             FILE_SHARE_READ, NULL, OPEN_ALWAYS, NULL,
             NULL);
-        if (m_pipe == INVALID_HANDLE_VALUE) {
-            std::string msg = "Opening pipe failed: ";
-            msg += std::to_string(GetLastError());
-            throw std::runtime_error(msg);
-        }
     }
 
     ~client()
@@ -143,18 +142,36 @@ public:
 
     /// <param name="buffer">Buffer to write.</param>
     /// <param name="size">Size of input buffer.</param>
-    void write(uint8_t* buffer, DWORD size)
+    void write(const void* buffer, DWORD size)
     {
+        if (m_pipe == INVALID_HANDLE_VALUE)
+            connect();
+
         DWORD trunc_size = (std::min)(size, m_buffer_size);
-        WriteFile(m_pipe, buffer, trunc_size, NULL, NULL);
+        if (WriteFile(m_pipe, buffer, trunc_size, NULL, NULL) == FALSE
+            && GetLastError() == ERROR_PIPE_NOT_CONNECTED) {
+            connect();
+            WriteFile(m_pipe, buffer, trunc_size, NULL, NULL);
+        }
+
+        FlushFileBuffers(m_pipe);
     }
 
 public:
     static constexpr DWORD MIN_BUFFER_SIZE = 1024;
 
 private:
+    void connect()
+    {
+        m_pipe = CreateFileA(m_name.c_str(), GENERIC_WRITE,
+            FILE_SHARE_READ, NULL, OPEN_ALWAYS, NULL,
+            NULL);
+    }
+
+private:
     DWORD m_buffer_size;
     HANDLE m_pipe;
+    std::string m_name;
 };
 
 }
