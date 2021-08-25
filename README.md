@@ -3,4 +3,6 @@ Single-file C++ library for Windows named pipes.
 
 Uses Windows's named pipes for inter-process communication. Pipes are inbound, meaning data is sent from client to server.
 
-Written in the space of 45 minutes and completely untested. I haven't run it once yet. Just kinda hoping it works when I use it eventually. Use at your own risk :)
+Not that well tested, especially in cases with multiple clients/servers open shenanigans. This is really meant for 1-to-1 scenarios, so I have no idea how it will work with multiple clients/servers.
+
+May rename client to sender and server to receiver, since those are way better names.
