@@ -32,6 +32,8 @@ A slightly more complex example can be found at [example.cpp](example.cpp).
 
 ### Sender
 ```c++
+#include "win-pipe.h"
+
 #include <iostream>
 #include <string>
 
@@ -46,6 +48,8 @@ int main()
 
 ### Receiver
 ```c++
+#include "win-pipe.h"
+
 #include <iostream>
 
 void callback(uint8_t* data, size_t size);
