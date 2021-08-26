@@ -23,7 +23,7 @@ Uses Windows's named pipes for inter-process communication. Senders send data th
 	* Hopefully will be implemented eventually
 	* For now, it's first-come-first-serve
 	* Subsequent senders have to wait in line until the currently connected sender is disconnected
-	* While waiting, writes are discarded
+	* While waiting, sends are discarded
 * Buffering data until a receiver connects
 	* Data sent with no receiver on the other end is discarded by design
 
@@ -40,7 +40,7 @@ int main()
 	win_pipe::sender sender("example_pipe");
 	std::string message;
 	std::getline(std::cin, message);
-	sender.write(message.c_str(), (DWORD)message.length() + 1);
+	sender.send(message.c_str(), (DWORD)message.length() + 1);
 }
 ```
 

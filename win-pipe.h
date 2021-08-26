@@ -252,11 +252,11 @@ public:
         return *this;
     }
 
-    /// <param name="buffer">Buffer to write.</param>
+    /// <param name="buffer">Buffer to send.</param>
     /// <param name="size">Size of input buffer (amount of data to write).</param>
     ///
     /// <returns>bool True = success; false = fail.</returns>
-    bool write(const void* buffer, DWORD size)
+    bool send(const void* buffer, DWORD size)
     {
         if (WriteFile(m_pipe, buffer, size, NULL, NULL) == FALSE) {
             DWORD error = GetLastError();

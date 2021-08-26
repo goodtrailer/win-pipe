@@ -62,6 +62,6 @@ void run_sender()
         if (message == "exit")
             break;
 
-        sender.write(message.c_str(), (DWORD)message.length() + 1);
+        sender.send(message.c_str(), (DWORD)message.length() + 1);
     }
 }
