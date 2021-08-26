@@ -158,23 +158,33 @@ public:
 
     /// <param name="buffer">Buffer to write.</param>
     /// <param name="size">Size of input buffer (amount of data to write).</param>
-    void write(const void* buffer, DWORD size)
+    bool write(const void* buffer, DWORD size)
     {
-        if (m_pipe == INVALID_HANDLE_VALUE)
-            connect();
-
-        if (WriteFile(m_pipe, buffer, size, NULL, NULL) == FALSE
-            && GetLastError() == ERROR_PIPE_NOT_CONNECTED) {
-            connect();
-            WriteFile(m_pipe, buffer, size, NULL, NULL);
+        if (WriteFile(m_pipe, buffer, size, NULL, NULL) == FALSE) {
+            DWORD error = GetLastError();
+            switch (error) {
+            case ERROR_INVALID_HANDLE:
+            case ERROR_PIPE_NOT_CONNECTED:
+                connect();
+                break;
+            default:
+                return false;
+            }
+            
+            if (WriteFile(m_pipe, buffer, size, NULL, NULL) == FALSE)
+                return false;
         }
 
         FlushFileBuffers(m_pipe);
+        return true;
     }
 
 private:
     void connect()
     {
+        if (m_pipe != INVALID_HANDLE_VALUE && m_pipe != NULL)
+            CloseHandle(m_pipe);
+
         m_pipe = CreateFileA(m_name.c_str(), GENERIC_WRITE,
             FILE_SHARE_READ, NULL, OPEN_ALWAYS, NULL,
             NULL);
