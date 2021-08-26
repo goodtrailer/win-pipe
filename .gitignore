@@ -8,3 +8,5 @@ bin/**
 
 # Visual Studio stuffs
 .vs/**
+*.sln
+*.vcxproj*

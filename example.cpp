@@ -1,6 +1,7 @@
 #include "win-pipe.h"
 
 #include <iostream>
+#include <unordered_map>
 
 void run_receiver();
 void receiver_callback(uint8_t* data, size_t size);
@@ -33,7 +34,7 @@ void run_receiver()
 {
     std::cout << "Type exit to quit." << std::endl;
 
-    win_pipe::receiver receiver("win-pipe_test", NULL, receiver_callback);
+    win_pipe::receiver receiver { "win-pipe_example", NULL, receiver_callback };
 
     std::string op;
     while (true) {
@@ -52,8 +53,8 @@ void receiver_callback(uint8_t* data, size_t size)
 void run_sender()
 {
     std::cout << "Send messages to the receiver! Type exit to quit." << std::endl;
-    
-    win_pipe::sender sender("win-pipe_test");
+
+    win_pipe::sender sender { "win-pipe_example" };
 
     std::string message;
     while (true) {
@@ -61,6 +62,6 @@ void run_sender()
         if (message == "exit")
             break;
 
-        sender.write(message.c_str(), message.length() + 1);
+        sender.write(message.c_str(), (DWORD)message.length() + 1);
     }
 }
