@@ -1,7 +1,6 @@
 #include "win-pipe.h"
 
 #include <iostream>
-#include <unordered_map>
 
 void run_receiver();
 void receiver_callback(uint8_t* data, size_t size);
