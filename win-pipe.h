@@ -28,8 +28,6 @@
 #include <string>
 #include <vector>
 
-#include <iostream>
-
 #include <Windows.h>
 
 static inline std::string format_name(std::string_view name)
