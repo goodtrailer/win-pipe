@@ -2,36 +2,38 @@
 
 #include <iostream>
 
-void run_server();
-void server_callback(uint8_t* data, size_t size);
-void run_client();
+void run_receiver();
+void receiver_callback(uint8_t* data, size_t size);
+void run_sender();
 
 int main(int argc, void** argv)
 {
     if (argc < 2) {
-        std::cout << "Specify server/client." << std::endl;
+        std::cout << "Specify sender/receiver." << std::endl;
         return EXIT_FAILURE;
     }
 
     const char* arg1 = reinterpret_cast<const char*>(argv[1]);
 
-    if (strcmp(arg1, "server") == 0)
-        run_server();
+    if (strcmp(arg1, "receiver") == 0)
+        run_receiver();
 
-    else if (strcmp(arg1, "client") == 0)
-        run_client();
+    else if (strcmp(arg1, "sender") == 0)
+        run_sender();
 
     else {
-        std::cout << "Unrecognized arg, must be server/client." << std::endl;
+        std::cout << "Unrecognized arg, must be sender/receiver." << std::endl;
         return EXIT_FAILURE;
     }
 
     return EXIT_SUCCESS;
 }
 
-void run_server()
+void run_receiver()
 {
-    win_pipe::server server("win-pipe_test", NULL, server_callback);
+    std::cout << "Type exit to quit." << std::endl;
+
+    win_pipe::receiver receiver("win-pipe_test", NULL, receiver_callback);
 
     std::string op;
     while (true) {
@@ -41,22 +43,24 @@ void run_server()
     }
 }
 
-void server_callback(uint8_t* data, size_t size)
+void receiver_callback(uint8_t* data, size_t size)
 {
     auto* message = reinterpret_cast<const char*>(data);
-    std::cout << message << std::endl;
+    std::cout << message << " : " << size << std::endl;
 }
 
-void run_client()
+void run_sender()
 {
-    win_pipe::client client("win-pipe_test", NULL);
+    std::cout << "Send messages to the receiver! Type exit to quit." << std::endl;
+    
+    win_pipe::sender sender("win-pipe_test");
 
-    std::string op;
+    std::string message;
     while (true) {
-        std::getline(std::cin, op);
-        if (op == "exit")
+        std::getline(std::cin, message);
+        if (message == "exit")
             break;
 
-        client.write("hello world", sizeof("hello world"));
+        sender.write(message.c_str(), message.length() + 1);
     }
 }

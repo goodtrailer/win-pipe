@@ -5,3 +5,6 @@
 *.exe
 *.bat
 bin/**
+
+# Visual Studio stuffs
+.vs/**
