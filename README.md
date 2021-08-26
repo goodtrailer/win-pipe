@@ -1,13 +1,14 @@
 # win-pipe
 Single-file C++ library for Windows named pipes.
 
-Uses Windows's named pipes for inter-process communication.
+Uses Windows's named pipes for inter-process communication. Senders send data through messages. Receivers automatically and asynchronously read messages and pass the data to a callback function.
 
 ## Features
 ### Supported
 * Sending/receiving data
 * Reuse of pipes
-    * i.e. if a sender is closed, another sender can use the same pipe/receiver. A new name does not have to be used.
+    * If a sender is closed, another sender can use the same pipe/receiver. A new name does not have to be used.
+	* The above also applies to receivers
 * STL container support (std::unordered_map, etc.)
 	* Default constructor
 	* Move constructor
