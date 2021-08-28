@@ -70,8 +70,6 @@ public:
     /// </summary>
     receiver() = default;
 
-    /// <param name="name">Name of the pipe.</param>
-    /// <param name="callback">Callback for when data is read.</param>
     receiver(std::string_view name, callback_t callback)
     {
         m_param = std::make_unique<thread_param>();
@@ -109,6 +107,9 @@ public:
 
     void set_callback(callback_t callback)
     {
+        if (!m_param)
+            return;
+
         std::lock_guard lock { m_param->callback_mutex };
         m_param->callback = callback;
     }
@@ -185,10 +186,6 @@ public:
 
     sender& operator=(sender&&) noexcept = default;
 
-    /// <param name="buffer">Buffer to send.</param>
-    /// <param name="size">Size of input buffer (amount of data to write).</param>
-    ///
-    /// <returns>bool True = success; false = fail.</returns>
     bool send(const void* buffer, DWORD size)
     {
         if (WriteFile(m_pipe.get(), buffer, size, NULL, NULL) == FALSE) {
