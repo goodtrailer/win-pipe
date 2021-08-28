@@ -5,15 +5,7 @@ Uses Windows's named pipes for inter-process communication. Senders send data th
 
 ## Features
 ### Supported
-* Sending data
-* Receiving data asynchronously
-* Reuse of pipes
-    * If a sender is closed, another sender can use the same pipe/receiver
-	* A new pipe name does not have to be used
-	* The above also applies to receivers
 * STL container support (std::unordered_map, etc.)
-	* Default constructor
-	* Move constructor
 * Any-size data transfer (within Windows API physical limits)
 
 ### Unsupported
@@ -25,7 +17,8 @@ Uses Windows's named pipes for inter-process communication. Senders send data th
 	* Subsequent senders have to wait in line until the currently connected sender is disconnected
 	* While waiting, sends are discarded
 * Buffering data until a receiver connects
-	* Data sent with no receiver on the other end is discarded by design
+	* This is by design
+	* Data sent with no receiver is discarded
 
 ## Examples
 A slightly more complex example can be found at [example.cpp](example.cpp).
@@ -56,7 +49,7 @@ void callback(uint8_t* data, size_t size);
 
 int main()
 {
-	win_pipe::receiver receiver("example_pipe", NULL, callback);
+	win_pipe::receiver receiver("example_pipe", callback);
 	std::cin.get();
 }
 
@@ -67,7 +60,7 @@ void callback(uint8_t* data, size_t size)
 }
 ```
 
-## TODO
+## To Do
 1. Make multiple senders work
 1. Fix any bugs that crop up
 
