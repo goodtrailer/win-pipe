@@ -56,7 +56,7 @@ void callback(uint8_t* data, size_t size);
 
 int main()
 {
-	win_pipe::receiver receiver("example_pipe", NULL, callback);
+	win_pipe::receiver receiver("example_pipe", callback);
 	std::cin.get();
 }
 

@@ -25,27 +25,41 @@
 #include <algorithm>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
+#include <iostream>
+
 #include <Windows.h>
 
-static inline std::string format_name(std::string_view name)
-{
-    std::string formatted = R"(\\.\pipe\)";
-    formatted += name;
-    return formatted;
+namespace win_pipe {
+
+namespace details {
+    static inline std::string format_name(std::string_view name)
+    {
+        std::string formatted = R"(\\.\pipe\)";
+        formatted += name;
+        return formatted;
+    }
+
+    struct handle_deleter {
+        void operator()(HANDLE handle)
+        {
+            if (handle != NULL && handle != INVALID_HANDLE_VALUE)
+                CloseHandle(handle);
+        }
+    };
+
+    using unique_handle = std::unique_ptr<void, handle_deleter>;
 }
 
-namespace win_pipe {
+using callback_t = std::function<void(uint8_t*, size_t)>;
 
 // -------------------------------------------------------------------[ receiver
 
 class receiver {
-public:
-    using callback_t = std::function<void(uint8_t*, size_t)>;
-
 public:
     /// <summary>
     /// Default constructor. Does nothing. No pipe is opened/created, and no
@@ -57,101 +71,63 @@ public:
     receiver() = default;
 
     /// <param name="name">Name of the pipe.</param>
-    /// <param name="buffer_size">Size of the pipe buffer. Only a suggestion and
-    /// can be exceeded.</param>
     /// <param name="callback">Callback for when data is read.</param>
-    receiver(std::string_view name, DWORD buffer_size, callback_t callback)
+    receiver(std::string_view name, callback_t callback)
     {
-        m_param = std::make_shared<thread_param>();
-        m_param->buffer_size = (std::max)(buffer_size, MIN_BUFFER_SIZE);
+        m_param = std::make_unique<thread_param>();
 
-        std::string pipe_name { format_name(name) };
-        m_param->pipe = CreateNamedPipeA(
+        std::string pipe_name { details::format_name(name) };
+        m_param->pipe.reset(CreateNamedPipeA(
             pipe_name.c_str(),
             PIPE_ACCESS_INBOUND | FILE_FLAG_FIRST_PIPE_INSTANCE,
             PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
-            1, m_param->buffer_size, m_param->buffer_size,
-            NMPWAIT_USE_DEFAULT_WAIT, NULL);
-        if (m_param->pipe == INVALID_HANDLE_VALUE) {
+            1, 1024, 1024, NMPWAIT_USE_DEFAULT_WAIT, NULL));
+        if (m_param->pipe.get() == INVALID_HANDLE_VALUE) {
             std::string msg { "Pipe creation failed: " };
             msg += std::to_string(GetLastError());
             throw std::runtime_error(msg);
         }
 
-        m_param->event = CreateEventA(NULL, TRUE, FALSE, NULL);
         m_param->callback = callback;
+        m_param->event.reset(CreateEventA(NULL, TRUE, FALSE, NULL));
 
-        m_thread = CreateThread(NULL, NULL, thread, m_param.get(), 0, NULL);
+        m_thread.reset(CreateThread(NULL, NULL, thread, m_param.get(), 0, NULL));
     }
 
-    /// <summary>
-    /// Move constructor.
-    /// </summary>
-    /// <param name="other">Instance of receiver to move.</param>
-    receiver(receiver&& other) noexcept
-        : m_thread(other.m_thread)
-        , m_param(other.m_param)
-    {
-        other.m_thread = NULL;
-        other.m_param = nullptr;
-    }
-
-    /// <summary>
-    /// Copy constructor.
-    /// <para />
-    /// Deleted because there cannot be multiple receivers per
-    /// pipe.
-    /// </summary>
-    /// <param name="other">Instance of receiver to copy.</param>
-    receiver(const receiver& other) = delete;
+    receiver(receiver&&) noexcept = default;
 
     ~receiver()
     {
         if (m_param)
-            SetEvent(m_param->event);
+            SetEvent(m_param->event.get());
 
-        CancelSynchronousIo(m_thread);
-        WaitForSingleObject(m_thread, INFINITE);
-
-        if (m_param)
-            CloseHandle(m_param->pipe);
+        CancelSynchronousIo(m_thread.get());
+        WaitForSingleObject(m_thread.get(), INFINITE);
     }
 
-    /// <summary>
-    /// Move assignment operator.
-    /// <para />
-    /// Closes the current pipe and takes control over the other pipe.
-    /// </summary>
-    /// <param name="other">Instance of receiver to move.</param>
-    /// <returns></returns>
-    receiver& operator=(receiver&& other) noexcept
+    receiver& operator=(receiver&&) noexcept = default;
+
+    void set_callback(callback_t callback)
     {
-        m_thread = other.m_thread;
-        m_param = other.m_param;
-
-        other.m_thread = NULL;
-        other.m_param = nullptr;
-
-        return *this;
+        std::lock_guard lock { m_param->callback_mutex };
+        m_param->callback = callback;
     }
-
-public:
-    static constexpr DWORD MIN_BUFFER_SIZE = 1024;
 
 private:
     static DWORD WINAPI thread(LPVOID lp)
     {
         auto* param = reinterpret_cast<thread_param*>(lp);
-        HANDLE& pipe = param->pipe;
-        DWORD& buffer_size = param->buffer_size;
+        auto pipe = param->pipe.get();
+        auto event = param->event.get();
+        auto& callback = param->callback;
+        auto& callback_mutex = param->callback_mutex;
 
-        std::vector<uint8_t> buffer;
-        buffer.resize(buffer_size);
+        std::vector<uint8_t> buffer(1024);
 
-        while (WaitForSingleObject(param->event, 1) == WAIT_TIMEOUT) {
+        while (WaitForSingleObject(event, 1) == WAIT_TIMEOUT) {
             ConnectNamedPipe(pipe, NULL);
 
-            while (WaitForSingleObject(param->event, 1) == WAIT_TIMEOUT) {
+            while (WaitForSingleObject(event, 1) == WAIT_TIMEOUT) {
                 DWORD bytes_read = 0;
                 if (!ReadFile(pipe, buffer.data(), (DWORD)buffer.size(), &bytes_read, NULL)) {
                     if (GetLastError() != ERROR_MORE_DATA)
@@ -165,8 +141,8 @@ private:
                     ReadFile(pipe, buffer.data() + bytes_read, leftover, &more_bytes_read, NULL);
                     bytes_read += more_bytes_read;
                 }
-
-                param->callback(buffer.data(), (size_t)bytes_read);
+                std::lock_guard lock { callback_mutex };
+                callback(buffer.data(), (size_t)bytes_read);
             }
 
             DisconnectNamedPipe(pipe);
@@ -177,15 +153,15 @@ private:
 
 private:
     struct thread_param {
-        HANDLE pipe;
-        HANDLE event;
+        details::unique_handle pipe;
+        details::unique_handle event;
+        std::mutex callback_mutex;
         callback_t callback;
-        DWORD buffer_size;
     };
 
 private:
-    std::shared_ptr<thread_param> m_param;
-    HANDLE m_thread;
+    std::unique_ptr<thread_param> m_param;
+    details::unique_handle m_thread;
 };
 
 // ---------------------------------------------------------------------[ sender
@@ -200,57 +176,14 @@ public:
     /// </summary>
     sender() = default;
 
-    /// <param name="name">Name of the pipe.</param>
     sender(std::string_view name)
+        : m_name { details::format_name(name) }
     {
-        m_name = format_name(name);
-        connect();
     }
 
-    /// <summary>
-    /// Move constructor.
-    /// </summary>
-    /// <param name="other">Instance of sender to move.</param>
-    sender(sender&& other) noexcept
-        : m_name(std::move(other.m_name))
-        , m_pipe(other.m_pipe)
-    {
-        other.m_pipe = NULL;
-    }
+    sender(sender&&) noexcept = default;
 
-    /// <summary>
-    /// Copy constructor.
-    /// <para />
-    /// Deleted because support for multiple senders per pipe has not yet been
-    /// implemented.
-    /// </summary>
-    /// <param name="other">Instance of sender to copy.</param>
-    sender(const sender& other) = delete;
-
-    ~sender()
-    {
-        CloseHandle(m_pipe);
-    }
-
-    /// <summary>
-    /// Move assignment operator.
-    /// <para />
-    /// Closes the current pipe and takes control over the other pipe.
-    /// </summary>
-    /// <param name="other">Instance of sender to move.</param>
-    /// <returns></returns>
-    sender& operator=(sender&& other) noexcept
-    {
-        CloseHandle(m_pipe);
-
-        m_name = other.m_name;
-        m_pipe = other.m_pipe;
-
-        other.m_name = std::string {};
-        other.m_pipe = NULL;
-
-        return *this;
-    }
+    sender& operator=(sender&&) noexcept = default;
 
     /// <param name="buffer">Buffer to send.</param>
     /// <param name="size">Size of input buffer (amount of data to write).</param>
@@ -258,7 +191,7 @@ public:
     /// <returns>bool True = success; false = fail.</returns>
     bool send(const void* buffer, DWORD size)
     {
-        if (WriteFile(m_pipe, buffer, size, NULL, NULL) == FALSE) {
+        if (WriteFile(m_pipe.get(), buffer, size, NULL, NULL) == FALSE) {
             DWORD error = GetLastError();
             switch (error) {
             case ERROR_INVALID_HANDLE:
@@ -269,27 +202,28 @@ public:
                 return false;
             }
 
-            if (WriteFile(m_pipe, buffer, size, NULL, NULL) == FALSE)
+            if (WriteFile(m_pipe.get(), buffer, size, NULL, NULL) == FALSE)
                 return false;
         }
 
-        FlushFileBuffers(m_pipe);
+        FlushFileBuffers(m_pipe.get());
         return true;
     }
 
 private:
     void connect()
     {
-        if (m_pipe != INVALID_HANDLE_VALUE && m_pipe != NULL)
-            CloseHandle(m_pipe);
-
-        m_pipe = CreateFileA(m_name.c_str(), GENERIC_WRITE,
+        // In order to CloseHandle before CreateFile, you need to destroy
+        // what's inside the unique_ptr by either calling reset() or assigning
+        // it nullptr.
+        m_pipe = nullptr;
+        m_pipe.reset(CreateFileA(m_name.c_str(), GENERIC_WRITE,
             FILE_SHARE_READ, NULL, OPEN_ALWAYS, NULL,
-            NULL);
+            NULL));
     }
 
 private:
-    HANDLE m_pipe;
+    details::unique_handle m_pipe;
     std::string m_name;
 };
 
