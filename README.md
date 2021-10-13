@@ -3,14 +3,17 @@ Single-file C++ library for Windows named pipes.
 
 Uses Windows's named pipes for inter-process communication. Senders send data through messages. Receivers automatically and asynchronously read messages and pass the data to a callback function.
 
+For the love of God, use [ZeroMQ](https://zeromq.org). This library is *extremely* slow in comparison and Windows-only.
+
 ## Features
 ### Supported
-* STL container support (std::unordered_map, etc.)
-* Any-size data transfer (within Windows API physical limits)
+* RAII (so STL container support)
+* Variable-size data transfer
 
 ### Unsupported
 * Multiple receivers per pipe
-	* Receivers automatically pop data from pipes, so having multiple receivers wouldn't make any sense
+	* Receivers automatically pop data from pipes, so having multiple receivers wouldn't work
+        * Pub/sub would be possible with shared memory, but this just uses Win32 API named pipes
 * Multiple senders per pipe
 	* Hopefully will be implemented eventually
 	* For now, it's first-come-first-serve
