@@ -301,7 +301,6 @@ public:
     sender(std::string_view name)
         : m_name { details::format_name(name) }
     {
-        connect();
     }
 
     sender(sender&&) noexcept = default;
@@ -338,11 +337,6 @@ private:
         m_pipe = nullptr;
         m_pipe.reset(CreateFileA(m_name.c_str(), GENERIC_WRITE, FILE_SHARE_READ,
             NULL, OPEN_ALWAYS, NULL, NULL));
-
-        if (m_pipe.get() == INVALID_HANDLE_VALUE) {
-            DWORD err = GetLastError();
-            int x = 5;
-        }
     }
 
 private:
