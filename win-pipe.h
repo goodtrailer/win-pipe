@@ -22,15 +22,11 @@
 #error "win-pipe is a Windows only library."
 #endif
 
-#include <algorithm>
 #include <functional>
-#include <memory>
 #include <mutex>
-#include <stdexcept>
+#include <optional>
 #include <string>
 #include <vector>
-
-#include <iostream>
 
 #include <Windows.h>
 
@@ -70,25 +66,19 @@ public:
     /// </summary>
     receiver() = default;
 
-    receiver(std::string_view name, callback_t callback)
+    receiver(std::string_view name, DWORD buffer_size, callback_t callback)
     {
         m_param = std::make_unique<thread_param>();
-
-        std::string pipe_name { details::format_name(name) };
-        m_param->pipe.reset(CreateNamedPipeA(
-            pipe_name.c_str(),
-            PIPE_ACCESS_INBOUND | FILE_FLAG_FIRST_PIPE_INSTANCE,
-            PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
-            1, 1024, 1024, NMPWAIT_USE_DEFAULT_WAIT, NULL));
-        if (m_param->pipe.get() == INVALID_HANDLE_VALUE) {
-            std::string msg { "Pipe creation failed: " };
-            msg += std::to_string(GetLastError());
-            throw std::runtime_error(msg);
-        }
-
+        m_param->name = name;
         m_param->callback = callback;
-        m_param->event.reset(CreateEventA(NULL, TRUE, FALSE, NULL));
+        m_param->stop_event.reset(CreateEventA(NULL, TRUE, FALSE, NULL));
 
+        DWORD trunc = buffer_size % 1024;
+        if (trunc == 0)
+            trunc = 1024;
+        m_param->buffer_size = buffer_size - trunc + 1024;
+
+        add_pipe(m_param.get());
         m_thread.reset(CreateThread(NULL, NULL, thread, m_param.get(), 0, NULL));
     }
 
@@ -97,7 +87,7 @@ public:
     ~receiver()
     {
         if (m_param)
-            SetEvent(m_param->event.get());
+            SetEvent(m_param->stop_event.get());
 
         CancelSynchronousIo(m_thread.get());
         WaitForSingleObject(m_thread.get(), INFINITE);
@@ -115,53 +105,184 @@ public:
     }
 
 private:
-    static DWORD WINAPI thread(LPVOID lp)
-    {
-        auto* param = reinterpret_cast<thread_param*>(lp);
-        auto pipe = param->pipe.get();
-        auto event = param->event.get();
-        auto& callback = param->callback;
-        auto& callback_mutex = param->callback_mutex;
+    enum class pipe_state {
+        connecting,
+        reading,
+        sending,
+    };
 
-        std::vector<uint8_t> buffer(1024);
+    struct instance {
+        details::unique_handle pipe = nullptr;
+        std::vector<uint8_t> buffer;
+        OVERLAPPED overlap = {};
+        pipe_state state = pipe_state::connecting;
+        bool pending = false;
 
-        while (WaitForSingleObject(event, 1) == WAIT_TIMEOUT) {
-            ConnectNamedPipe(pipe, NULL);
+        instance() = default;
+        instance(instance&&) = default;
+        instance(instance&) = delete;
 
-            while (WaitForSingleObject(event, 1) == WAIT_TIMEOUT) {
-                DWORD bytes_read = 0;
-                if (!ReadFile(pipe, buffer.data(), (DWORD)buffer.size(), &bytes_read, NULL)) {
-                    if (GetLastError() != ERROR_MORE_DATA)
-                        break;
+        instance& operator=(instance&&) = default;
+    };
 
-                    DWORD leftover = 0;
-                    PeekNamedPipe(pipe, NULL, NULL, NULL, NULL, &leftover);
-                    buffer.resize(bytes_read + leftover);
-
-                    DWORD more_bytes_read = 0;
-                    ReadFile(pipe, buffer.data() + bytes_read, leftover, &more_bytes_read, NULL);
-                    bytes_read += more_bytes_read;
-                }
-                std::lock_guard lock { callback_mutex };
-                callback(buffer.data(), (size_t)bytes_read);
-            }
-
-            DisconnectNamedPipe(pipe);
-        }
-
-        return TRUE;
-    }
-
-private:
     struct thread_param {
-        details::unique_handle pipe;
-        details::unique_handle event;
+        std::vector<instance> instances;
+        std::vector<HANDLE> events;
+
+        std::string name;
+        DWORD buffer_size;
+
+        details::unique_handle stop_event;
         std::mutex callback_mutex;
         callback_t callback;
     };
 
 private:
-    std::unique_ptr<thread_param> m_param;
+    static std::optional<instance> create_instance(std::string_view name,
+        DWORD size)
+    {
+        std::string pipe_name = details::format_name(name);
+        instance inst;
+
+        inst.pipe.reset(CreateNamedPipeA(
+            pipe_name.c_str(),
+            PIPE_ACCESS_INBOUND | FILE_FLAG_OVERLAPPED,
+            PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
+            PIPE_UNLIMITED_INSTANCES, 1024, 1024, NMPWAIT_USE_DEFAULT_WAIT,
+            NULL));
+        if (!inst.pipe.get() || inst.pipe.get() == INVALID_HANDLE_VALUE)
+            return std::nullopt;
+
+        inst.overlap.hEvent = CreateEventA(NULL, TRUE, FALSE, NULL);
+        if (!inst.overlap.hEvent || inst.overlap.hEvent == INVALID_HANDLE_VALUE)
+            return std::nullopt;
+
+        if (ConnectNamedPipe(inst.pipe.get(), &inst.overlap)
+            || GetLastError() != ERROR_IO_PENDING)
+            return std::nullopt;
+
+        inst.pending = true;
+        inst.state = pipe_state::connecting;
+        inst.buffer.resize(size);
+
+        return inst;
+    }
+
+    static void delete_instance(instance& inst)
+    {
+        DisconnectNamedPipe(inst.pipe.get());
+        CloseHandle(inst.overlap.hEvent);
+        inst = {};
+    }
+
+    static bool add_pipe(thread_param* param)
+    {
+        std::optional<instance> inst_opt = create_instance(param->name,
+            param->buffer_size);
+        if (!inst_opt.has_value())
+            return false;
+
+        auto& inst = param->instances.emplace_back(std::move(inst_opt.value()));
+        param->events.emplace_back(inst.overlap.hEvent);
+
+        return true;
+    }
+
+    static void remove_pipe(thread_param* param, size_t index)
+    {
+        auto inst = param->instances.begin() + index;
+        delete_instance(*inst);
+        param->instances.erase(inst);
+        param->events.erase(param->events.begin() + index);
+    }
+
+    static void clear_pipes(thread_param* param)
+    {
+        for (auto& inst : param->instances)
+            delete_instance(inst);
+        param->instances.clear();
+        param->events.clear();
+    }
+
+    static DWORD WINAPI thread(LPVOID lp)
+    {
+        auto* param = reinterpret_cast<thread_param*>(lp);
+        auto& instances = param->instances;
+        auto& events = param->events;
+        auto& stop_event = param->stop_event;
+        auto& callback = param->callback;
+        auto& callback_mutex = param->callback_mutex;
+
+        size_t index = 0;
+        DWORD bytes_read = 0;
+        while (WaitForSingleObject(stop_event.get(), 0) == WAIT_TIMEOUT) {
+            index = WaitForMultipleObjects((DWORD)events.size(), events.data(),
+                        FALSE, 1)
+                - WAIT_OBJECT_0;
+
+            if (index < 0 || index >= instances.size())
+                continue;
+            instance* inst = &instances[index];
+
+            if (inst->pending) {
+                BOOL success = GetOverlappedResult(inst->pipe.get(),
+                    &inst->overlap, &bytes_read, FALSE);
+
+                switch (inst->state) {
+                case pipe_state::connecting:
+                    inst->state = pipe_state::reading;
+                    add_pipe(param);
+                    inst = &instances[index];
+                    break;
+
+                case pipe_state::reading:
+                    if (!success && GetLastError() != ERROR_MORE_DATA)
+                        break;
+                    inst->state = pipe_state::sending;
+                    break;
+
+                case pipe_state::sending:
+                default:
+                    remove_pipe(param, index);
+                    continue;
+                }
+            }
+
+            switch (inst->state) {
+            case pipe_state::reading:
+                if (ReadFile(inst->pipe.get(), inst->buffer.data(),
+                        (DWORD)inst->buffer.size(), &bytes_read, &inst->overlap)
+                    || GetLastError() == ERROR_MORE_DATA) {
+                    inst->pending = false;
+                } else if (GetLastError() == ERROR_IO_PENDING) {
+                    inst->pending = true;
+                    break;
+                } else {
+                    remove_pipe(param, index);
+                    continue;
+                }
+
+                [[fallthrough]];
+            case pipe_state::sending:
+                /* clang-format off */ {
+                    std::lock_guard lock { callback_mutex };
+                    callback(inst->buffer.data(), (size_t)bytes_read);
+                } /* clang-format on */
+                inst->pending = false;
+                inst->state = pipe_state::reading;
+                break;
+            default:
+                break;
+            }
+        }
+
+        clear_pipes(param);
+        return TRUE;
+    }
+
+private:
+    std::unique_ptr<thread_param>
+        m_param;
     details::unique_handle m_thread;
 };
 
@@ -180,6 +301,7 @@ public:
     sender(std::string_view name)
         : m_name { details::format_name(name) }
     {
+        connect();
     }
 
     sender(sender&&) noexcept = default;
@@ -188,7 +310,7 @@ public:
 
     bool send(const void* buffer, DWORD size)
     {
-        if (WriteFile(m_pipe.get(), buffer, size, NULL, NULL) == FALSE) {
+        if (!WriteFile(m_pipe.get(), buffer, size, NULL, NULL)) {
             DWORD error = GetLastError();
             switch (error) {
             case ERROR_INVALID_HANDLE:
@@ -199,7 +321,7 @@ public:
                 return false;
             }
 
-            if (WriteFile(m_pipe.get(), buffer, size, NULL, NULL) == FALSE)
+            if (!WriteFile(m_pipe.get(), buffer, size, NULL, NULL))
                 return false;
         }
 
@@ -214,14 +336,17 @@ private:
         // what's inside the unique_ptr by either calling reset() or assigning
         // it nullptr.
         m_pipe = nullptr;
-        m_pipe.reset(CreateFileA(m_name.c_str(), GENERIC_WRITE,
-            FILE_SHARE_READ, NULL, OPEN_ALWAYS, NULL,
-            NULL));
+        m_pipe.reset(CreateFileA(m_name.c_str(), GENERIC_WRITE, FILE_SHARE_READ,
+            NULL, OPEN_ALWAYS, NULL, NULL));
+
+        if (m_pipe.get() == INVALID_HANDLE_VALUE) {
+            DWORD err = GetLastError();
+            int x = 5;
+        }
     }
 
 private:
     details::unique_handle m_pipe;
     std::string m_name;
 };
-
 }

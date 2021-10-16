@@ -39,11 +39,11 @@ void run_receiver()
     win_pipe::callback_t callbacks[2] { receiver_callback1, receiver_callback2 };
 
     std::unordered_map<int, win_pipe::receiver> map;
-    map[0] = win_pipe::receiver { "win-pipe_example", callbacks[current_callback] };
+    map[0] = win_pipe::receiver { "win-pipe_example", 2048, callbacks[current_callback] };
 
     std::string op;
     while (true) {
-        std::getline(std::cin, op);
+        std::cin >> op;
         if (op == "callback") {
             current_callback++;
             map[0].set_callback(callbacks[current_callback % 2]);
