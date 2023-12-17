@@ -68,7 +68,7 @@ void receiver_callback1(uint8_t* data, [[maybe_unused]] size_t size)
     {
         auto* start = reinterpret_cast<decltype(end)*>(data);
         auto latency = duration_cast<nanoseconds>(end - *start);
-        std::cout << "latency: " << latency.count() << "\n";
+        std::cout << "latency: " << latency.count() << "ns\n";
     }
     else
     {
@@ -91,7 +91,7 @@ void receiver_callback2([[maybe_unused]] uint8_t* data, size_t size)
     {
         auto* start = reinterpret_cast<decltype(end)*>(data);
         auto latency = duration_cast<nanoseconds>(end - *start);
-        std::cout << "latency: " << latency.count() << "\n";
+        std::cout << "latency: " << latency.count() << "ns\n";
     }
     else
     {
