@@ -1,6 +1,7 @@
 #include "win-pipe.h"
 
 #include <array>
+#include <chrono>
 #include <iostream>
 
 void run_receiver();
@@ -53,31 +54,68 @@ void run_receiver()
     }
 }
 
-void receiver_callback1(uint8_t* data, size_t size)
+void receiver_callback1(uint8_t* data, [[maybe_unused]] size_t size)
 {
-    auto* message = reinterpret_cast<const char*>(data);
-    std::cout << message << std::endl;
+    using namespace std::chrono;
+
+    static int count = 0;
+    int oldCount = count;
+    count++;
+
+    auto end = high_resolution_clock::now();
+
+    if (oldCount % 2 == 0)
+    {
+        auto* start = reinterpret_cast<decltype(end)*>(data);
+        auto latency = duration_cast<nanoseconds>(end - *start);
+        std::cout << "latency: " << latency.count() << "\n";
+    }
+    else
+    {
+        auto* message = reinterpret_cast<const char*>(data);
+        std::cout << message << std::endl;
+    }
 }
 
-void receiver_callback2(uint8_t* data, size_t size)
+void receiver_callback2([[maybe_unused]] uint8_t* data, size_t size)
 {
-    auto* message = reinterpret_cast<const char*>(data);
-    std::cout << "Received a message " << size << " bytes long!" << std::endl;
+    using namespace std::chrono;
+
+    static int count = 0;
+    int oldCount = count;
+    count++;
+
+    auto end = high_resolution_clock::now();
+
+    if (oldCount % 2 == 0)
+    {
+        auto* start = reinterpret_cast<decltype(end)*>(data);
+        auto latency = duration_cast<nanoseconds>(end - *start);
+        std::cout << "latency: " << latency.count() << "\n";
+    }
+    else
+    {
+        std::cout << "received a message " << size << " bytes long!\n";
+    }
 }
 
 void run_sender()
 {
+    using namespace std::chrono;
+
     std::cout << "Send messages to the receiver! Type exit to quit." << std::endl;
 
-    std::unordered_map<int, win_pipe::sender> map;
-    map[0] = win_pipe::sender { "win-pipe_example" };
+    auto sender = win_pipe::sender { "win-pipe_example" };
 
     std::string message;
     while (true) {
         std::getline(std::cin, message);
+        auto start = high_resolution_clock::now();
+
+        sender.send(&start, sizeof(decltype(start)));
+        sender.send(message.c_str(), (DWORD)message.length() + 1);
+
         if (message == "exit")
             break;
-
-        map[0].send(message.c_str(), (DWORD)message.length() + 1);
     }
 }
